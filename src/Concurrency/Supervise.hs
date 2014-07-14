@@ -1,11 +1,22 @@
-module Concurrency.Supervise where
+module Concurrency.Supervise 
+    ( ThreadCount
+    , RespawnTime
+    , Supervise (..)
+    , supervise
+      -- * re-exports for your convenience
+    , poll
+    , Async(..)
+    )
+    where
 
+import           Control.Applicative       ( (<$>), (<*>) )
+import           Control.Concurrent ( threadDelay )
 import           Control.Concurrent.Async  (Async (..), async, poll)
-import           Control.Concurrent.MVar   (MVar, newMVar)
+import           Control.Concurrent.MVar   (MVar, newMVar, takeMVar, putMVar)
 import           Control.Exception         (SomeException)
 import           Control.Monad             (forM_, forever, replicateM)
 import           Control.Monad.IO.Class    (liftIO)
-import           Control.Monad.Trans.State (evalStateT, get, modify)
+import           Control.Monad.Trans.State (evalStateT, get, modify, StateT)
 import           Data.List                 (delete)
 
 type ThreadCount = Int
@@ -17,6 +28,9 @@ data Supervise = Supervise {
     , adminThread :: Async () -- * Respawn time, 0 or greater
 }
 
+secs :: Int -> Int
+secs = (*1000000)
+
 supervise ::
      ThreadCount -- * threads running concurrently
   -> RespawnTime  -- * respawn time
@@ -24,23 +38,39 @@ supervise ::
   -> (SomeException -> IO b) -- * exception handler
   -> (a -> IO c)  -- * successful completion handler
   -> IO Supervise
-supervise count respawn action exceptionHandler completionHandler = do
-  threadCountMVar <- newMVar count :: IO (MVar Int)
-  respawnMVar <- newMVar respawn :: IO (MVar Int)
-  asyncs <- replicateM respawn $ async (forever action)
-  admin <- async $ flip evalStateT asyncs $ forever $ do
+supervise count respawnTime action exceptionHandler completionHandler = do
+  threadCountMVar <- newMVar count :: IO (MVar ThreadCount)
+  respawnMVar <- newMVar respawnTime :: IO (MVar RespawnTime)
+  asyncs <- replicateM count $ async (forever action)
+  adminThread <- async $ flip evalStateT asyncs $ forever $ do
     as <- get
     forM_ as $ \a -> do
         result <- liftIO $ poll a
         case result of
           Nothing -> return () -- not done yet
-          Just (Right x) ->
+          Just (Right x) -> -- completed with no errors
               do liftIO $ completionHandler x
                  modify (delete a)
-          Just (Left e) ->
+                 respawn threadCountMVar respawnMVar
+          Just (Left e) -> -- completed with errors
               do liftIO $ exceptionHandler e
                  modify (delete a)
-  return $ Supervise threadCountMVar respawnMVar admin
+                 respawn threadCountMVar respawnMVar
+  return $ Supervise threadCountMVar respawnMVar adminThread
+      where
+        respawn threadCountMVar respawnMVar = do
+          (threadCount, respawnTime) <- liftIO $ do
+                                           (,) <$> takeMVar threadCountMVar
+                                               <*> takeMVar respawnMVar
+          numAsyncs <- length <$> get
+          newActions <- case numAsyncs - threadCount of
+                 x | x > 0 -> liftIO $ replicateM x $ async $ forever $ 
+                                do threadDelay $ secs respawnTime
+                                   return [action]
+                   | otherwise -> return []
+          modify (++newActions)
+          liftIO $ do putMVar threadCountMVar threadCount  
+                      putMVar respawnMVar respawnTime
 
 
 
