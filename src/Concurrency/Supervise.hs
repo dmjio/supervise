@@ -59,8 +59,8 @@ supervise count respawnTime action exceptionHandler completionHandler = do
   return $ Supervise threadCountMVar respawnMVar adminThread
 
 respawn :: (MonadIO m, Functor m) =>
-           MVar Int -> 
-           MVar Int -> 
+           MVar ThreadCount -> 
+           MVar RespawnTime -> 
            b -> 
            StateT [Async a] m ()
 respawn threadCountMVar respawnMVar action = do
