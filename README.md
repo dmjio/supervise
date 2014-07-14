@@ -33,10 +33,9 @@ main = do
   forever $ do
     res <- poll adminThread
     case res of
-      Nothing -> do putStrLn "adming running..."
-                    threadDelay (secs 3)
+      Nothing        -> putStrLn "adming running..."
       Just (Right x) -> putStrLn "admin completed.."
-      Just (Left x) -> putStrLn "admin error.."
+      Just (Left x)  -> putStrLn "admin error.."
     threadDelay (secs 2)
 
   -- Example
