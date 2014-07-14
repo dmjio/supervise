@@ -15,7 +15,7 @@ import           Control.Concurrent.Async  (Async (..), async, poll)
 import           Control.Concurrent.MVar   (MVar, newMVar, putMVar, takeMVar)
 import           Control.Exception         (SomeException)
 import           Control.Monad             (forM_, forever, replicateM)
-import           Control.Monad.IO.Class    (liftIO)
+import           Control.Monad.IO.Class    (liftIO, MonadIO)
 import           Control.Monad.Trans.State (StateT, evalStateT, get, modify)
 import           Data.List                 (delete)
 
@@ -51,17 +51,22 @@ supervise count respawnTime action exceptionHandler completionHandler = do
           Just (Right x) -> -- completed with no errors
               do liftIO $ completionHandler x
                  modify (delete a)
-                 respawn threadCountMVar respawnMVar
+                 respawn threadCountMVar respawnMVar action
           Just (Left e) -> -- completed with errors
               do liftIO $ exceptionHandler e
                  modify (delete a)
-                 respawn threadCountMVar respawnMVar
+                 respawn threadCountMVar respawnMVar action
   return $ Supervise threadCountMVar respawnMVar adminThread
-      where
-        respawn threadCountMVar respawnMVar = do
-          (threadCount, respawnTime) <- liftIO $ 
-                                           (,) <$> takeMVar threadCountMVar
-                                               <*> takeMVar respawnMVar
+
+respawn :: (MonadIO m, Functor m) =>
+           MVar Int -> 
+           MVar Int -> 
+           b -> 
+           StateT [Async a] m ()
+respawn threadCountMVar respawnMVar action = do
+          (threadCount, respawnTime) <- 
+              liftIO $ (,) <$> takeMVar threadCountMVar
+                           <*> takeMVar respawnMVar
           numAsyncs <- length <$> get
           newActions <- case numAsyncs - threadCount of
                  x | x > 0 -> liftIO $ replicateM x $ async $ forever $
