@@ -2,6 +2,8 @@ module Concurrency.Supervise
     ( ThreadCount
     , RespawnTime
     , Supervise (..)
+    , ThreadCount (..)
+    , RespawnTime (..)
     , supervise
       -- * re-exports for your convenience
     , poll
@@ -19,28 +21,29 @@ import           Control.Monad.IO.Class    (liftIO, MonadIO)
 import           Control.Monad.Trans.State (StateT, evalStateT, get, modify)
 import           Data.List                 (delete)
 
-type ThreadCount = Int
-type RespawnTime = Int
+newtype ThreadCount = ThreadCount Int
+newtype RespawnTime = RespawnTime Int
 
 data Supervise = Supervise {
-      threadCount :: MVar Int -- * Thread count, must be greater than 0
-    , respawnTime :: MVar Int -- * Respawn time, 0 or greater
-    , adminThread :: Async () -- * Respawn time, 0 or greater
+      threadCount :: MVar ThreadCount -- * Thread count, must be greater than 0
+    , respawnTime :: MVar RespawnTime -- * Respawn time, 0 or greater
+    , adminThread :: Async ()         -- * Admin thread for inspecting and monitoring
   }
 
 secs :: Int -> Int
 secs = (*1000000)
 
 supervise ::
-     ThreadCount             -- * threads running concurrently
-  -> RespawnTime             -- * respawn time
+     ThreadCount             -- * Threads running concurrently
+  -> RespawnTime             -- * Respawn time
   -> IO a                    -- * action
   -> (SomeException -> IO b) -- * exception handler
   -> (a -> IO c)             -- * successful completion handler
   -> IO Supervise
-supervise count respawnTime action exceptionHandler completionHandler = do
-  threadCountMVar <- newMVar count :: IO (MVar ThreadCount)
-  respawnMVar     <- newMVar respawnTime :: IO (MVar RespawnTime)
+supervise tc@(ThreadCount count) rt@(RespawnTime respawnTime) 
+             action exceptionHandler completionHandler = do
+  threadCountMVar <- newMVar tc :: IO (MVar ThreadCount)
+  respawnMVar     <- newMVar rt :: IO (MVar RespawnTime)
   asyncs          <- replicateM count $ async action
   adminThread     <- async $ flip evalStateT asyncs $ forever $ do
                        as <- get
@@ -59,24 +62,24 @@ supervise count respawnTime action exceptionHandler completionHandler = do
   return $ Supervise threadCountMVar respawnMVar adminThread
 
 respawn :: (MonadIO m, Functor m) =>
-           MVar Int -> 
-           MVar Int -> 
+           MVar ThreadCount -> 
+           MVar RespawnTime -> 
            IO a -> 
            StateT [Async a] m ()
 respawn threadCountMVar respawnMVar action = do
-          (threadCount, respawnTime) <- 
+          (tc@(ThreadCount threadCount), rt@(RespawnTime respawnTime)) <- 
               liftIO $ (,) <$> takeMVar threadCountMVar
                            <*> takeMVar respawnMVar
           numAsyncs <- length <$> get
-          newActions <- liftIO $ do
+          newActions <- liftIO $ 
                           case threadCount - numAsyncs of
                             x | x > 0 -> replicateM x $ async $ 
                                          do threadDelay $ secs respawnTime
                                             action
                               | otherwise -> return []
           modify (++newActions)
-          liftIO $ do putMVar threadCountMVar threadCount
-                      putMVar respawnMVar respawnTime
+          liftIO $ do putMVar threadCountMVar tc
+                      putMVar respawnMVar rt
 
 
 
