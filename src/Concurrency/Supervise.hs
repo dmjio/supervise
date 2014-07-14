@@ -1,4 +1,4 @@
-module Concurrency.Supervise 
+module Concurrency.Supervise
     ( ThreadCount
     , RespawnTime
     , Supervise (..)
@@ -9,14 +9,14 @@ module Concurrency.Supervise
     )
     where
 
-import           Control.Applicative       ( (<$>), (<*>) )
-import           Control.Concurrent ( threadDelay )
+import           Control.Applicative       ((<$>), (<*>))
+import           Control.Concurrent        (threadDelay)
 import           Control.Concurrent.Async  (Async (..), async, poll)
-import           Control.Concurrent.MVar   (MVar, newMVar, takeMVar, putMVar)
+import           Control.Concurrent.MVar   (MVar, newMVar, putMVar, takeMVar)
 import           Control.Exception         (SomeException)
 import           Control.Monad             (forM_, forever, replicateM)
 import           Control.Monad.IO.Class    (liftIO)
-import           Control.Monad.Trans.State (evalStateT, get, modify, StateT)
+import           Control.Monad.Trans.State (StateT, evalStateT, get, modify)
 import           Data.List                 (delete)
 
 type ThreadCount = Int
@@ -59,17 +59,17 @@ supervise count respawnTime action exceptionHandler completionHandler = do
   return $ Supervise threadCountMVar respawnMVar adminThread
       where
         respawn threadCountMVar respawnMVar = do
-          (threadCount, respawnTime) <- liftIO $ do
+          (threadCount, respawnTime) <- liftIO $ 
                                            (,) <$> takeMVar threadCountMVar
                                                <*> takeMVar respawnMVar
           numAsyncs <- length <$> get
           newActions <- case numAsyncs - threadCount of
-                 x | x > 0 -> liftIO $ replicateM x $ async $ forever $ 
+                 x | x > 0 -> liftIO $ replicateM x $ async $ forever $
                                 do threadDelay $ secs respawnTime
                                    return [action]
                    | otherwise -> return []
           modify (++newActions)
-          liftIO $ do putMVar threadCountMVar threadCount  
+          liftIO $ do putMVar threadCountMVar threadCount
                       putMVar respawnMVar respawnTime
 
 
